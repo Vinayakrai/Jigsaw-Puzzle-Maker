@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Jigsaw Puzzle</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0 }
+  body {
+    font-family: 'Segoe UI', Tahoma, sans-serif;
+    background: lightgreen;
+    overflow: hidden;
+  }
+  #controls {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 20px;
+    background: #fff;
+    border-bottom: 1px solid #ddd;
+  }
+  #controls label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: .95rem;
+    color: #333;
+  }
+  input[type=file] { font-family: inherit; }
+  input[type=file]::file-selector-button {
+    padding:6px 12px;
+    border:1px solid #007bff;
+    border-radius:4px;
+    background:#007bff;
+    color:#fff;
+    cursor:pointer;
+    transition:background .2s;
+  }
+  input[type=file]::file-selector-button:hover { background:#0056b3 }
+  input[type=number] {
+    width:60px; padding:6px 8px;
+    border:1px solid #ccc; border-radius:4px;
+  }
+  #controls button {
+    padding:8px 16px;
+    background:#28a745; color:#fff;
+    border:1px solid #28a745; border-radius:4px;
+    cursor:pointer; transition:background .2s;
+  }
+  #controls button:hover { background:#218838 }
+
+  #container-puzzle {
+    position: relative;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: calc(100vh - 60px);
+    padding:10px;
+  }
+  .side {
+    width:50%;
+    height:100%;
+    background:#ddd;
+    border:2px dashed #bbb;
+    margin:0 5px;
+    overflow:visible;
+  }
+  .piece {
+    position:absolute;
+    cursor:grab;
+    user-select:none;
+    touch-action:none;
+    transition:box-shadow .2s,transform .1s;
+  }
+  .piece.solved {
+    cursor:default;
+    box-shadow:none;
+  }
+  .confetti {
+    position:fixed; top:0; left:0;
+    width:8px; height:8px;
+    opacity:.9;
+    pointer-events:none;
+    z-index:10000;
+    animation:fall var(--dur) linear var(--delay) forwards;
+  }
+  @keyframes fall {
+    to {
+      transform: translate(var(--dx),100vh) rotate(720deg);
+      opacity:0;
+    }
+  }
+</style>
+</head>
+<body>
+
+<div id="controls">
+  <label>Pick Image<input type="file" id="upload" accept="image/*"></label>
+  <label>Rows<input type="number" id="rows" value="4" min="2" max="20"></label>
+  <label>Cols<input type="number" id="cols" value="4" min="2" max="20"></label>
+  <button id="start">Start Puzzle</button>
+</div>
+
+<div id="container-puzzle">
+  <div id="scatter-container" class="side"></div>
+  <div id="board-container"   class="side"></div>
+</div>
+
+<script>
+(function(){
+  const UP      = document.getElementById('upload'),
+        START   = document.getElementById('start'),
+        ROWS_IN = document.getElementById('rows'),
+        COLS_IN = document.getElementById('cols'),
+        SCATTER = document.getElementById('scatter-container'),
+        BOARD   = document.getElementById('board-container'),
+        CONT    = document.getElementById('container-puzzle'),
+        CTRL    = document.getElementById('controls');
+
+  let img, rows, cols,
+      origW, origH,
+      scale, scaledW, scaledH,
+      pieceW, pieceH, knob,
+      solvedCount = 0;
+
+  START.addEventListener('click', ()=>{
+    if(!UP.files[0]) return alert('Select an image.');
+        document.querySelectorAll('.piece, .template, .confetti').forEach(el => el.remove());
+    solvedCount = 0;
+    rows = +ROWS_IN.value; cols = +COLS_IN.value;
+    // RESET everything
+
+
+    loadImage(UP.files[0]).then(i=>{
+      img = i; origW = i.width; origH = i.height;
+      solvedCount = 0;
+      computeScale();
+      initLayout();
+      initPuzzle();
+      UP.value = "";  
+
+    });
+  });
+
+  function loadImage(file){
+    return new Promise(res=>{
+      const i = new Image();
+      i.onload = ()=>res(i);
+      i.src = URL.createObjectURL(file);
+    });
+  }
+
+  function computeScale(){
+    const w = window.innerWidth - 40,
+          h = window.innerHeight - CTRL.offsetHeight - 40;
+    scale   = Math.min((w/2)/origW, h/origH, 1);
+    scaledW = origW * scale;
+    scaledH = origH * scale;
+    pieceW  = scaledW / cols;
+    pieceH  = scaledH / rows;
+    knob    = Math.min(pieceW, pieceH)/4;
+  }
+
+  function initLayout(){
+    SCATTER.style.width  = BOARD.style.width  = scaledW + 'px';
+    SCATTER.style.height = BOARD.style.height = scaledH + 'px';
+    SCATTER.innerHTML = BOARD.innerHTML = '';
+    CONT.querySelectorAll('.piece, .template').forEach(e=>e.remove());
+  }
+
+  function initPuzzle(){
+    // build edge‐grids
+    const horiz = Array.from({length:rows+1}, ()=>Array(cols).fill(0)),
+          vert  = Array.from({length:rows},   ()=>Array(cols+1).fill(0));
+    for(let r=1;r<rows;r++) for(let c=0;c<cols;c++) horiz[r][c]=Math.random()<.5?1:-1;
+    for(let r=0;r<rows;r++) for(let c=1;c<cols;c++) vert[r][c]=Math.random()<.5?1:-1;
+
+    const sx = SCATTER.offsetLeft,
+          sy = SCATTER.offsetTop,
+          bx = BOARD.offsetLeft,
+          by = BOARD.offsetTop,
+          ox = bx - knob,
+          oy = by - knob;
+
+    const tpl = document.createElement('canvas');
+    tpl.classList.add('template');
+    tpl.width  = scaledW + 2*knob;
+    tpl.height = scaledH + 2*knob;
+    tpl.style.position = 'absolute';
+    tpl.style.left     = ox + 'px';
+    tpl.style.top      = oy + 'px';
+    tpl.style.pointerEvents = 'none';
+    const tctx = tpl.getContext('2d');
+    tctx.lineWidth   = 2;
+    tctx.strokeStyle = '#ddd';
+    for(let r=0;r<rows;r++){
+      for(let c=0;c<cols;c++){
+        const edges = {
+          top:    r===0        ? 0 : -horiz[r][c],
+          bottom: r===rows-1   ? 0 :  horiz[r+1][c],
+          left:   c===0        ? 0 : -vert[r][c],
+          right:  c===cols-1   ? 0 :  vert[r][c+1]
+        };
+        tctx.save();
+        tctx.translate(knob + c*pieceW, knob + r*pieceH);
+        tctx.stroke(piecePath(pieceW,pieceH,edges));
+        tctx.restore();
+      }
+    }
+    CONT.appendChild(tpl);
+
+    // create pieces
+    for(let r=0;r<rows;r++){
+      for(let c=0;c<cols;c++){
+        const edges = {
+          top:    r===0        ? 0 : -horiz[r][c],
+          bottom: r===rows-1   ? 0 :  horiz[r+1][c],
+          left:   c===0        ? 0 : -vert[r][c],
+          right:  c===cols-1   ? 0 :  vert[r][c+1]
+        };
+        const piece = makePiece(edges,r,c);
+        const cw = pieceW + 2*knob, ch = pieceH + 2*knob;
+        piece.style.left = (sx + Math.random()*(scaledW-cw)) + 'px';
+        piece.style.top  = (sy + Math.random()*(scaledH-ch)) + 'px';
+        // corrected target to line up with outline
+        piece._targetX = ox + c*pieceW;
+        piece._targetY = oy + r*pieceH;
+        piece._rotation= 0;
+        piece.addEventListener('dblclick', ()=>rotate(piece));
+        makeDraggable(piece);
+        CONT.appendChild(piece);
+      }
+    }
+  }
+
+  function makePiece(e, r0, c0){
+    const cw = pieceW + 2*knob,
+          ch = pieceH + 2*knob,
+          c  = document.createElement('canvas'),
+          ctx= c.getContext('2d');
+    c.width = cw; c.height = ch;
+
+    // expand source area to cover bumps
+    const oW = origW/cols, oH = origH/rows,
+          extraL = e.left   === 1 ? knob/scale : 0,
+          extraR = e.right  === 1 ? knob/scale : 0,
+          extraT = e.top    === 1 ? knob/scale : 0,
+          extraB = e.bottom === 1 ? knob/scale : 0,
+          sx = c0*oW - extraL,
+          sy = r0*oH - extraT,
+          sw = oW + extraL + extraR,
+          sh = oH + extraT + extraB,
+          dx = -extraL*scale,
+          dy = -extraT*scale;
+
+    ctx.save();
+      ctx.translate(knob, knob);
+      ctx.clip(piecePath(pieceW,pieceH,e));
+      ctx.drawImage(img, sx, sy, sw, sh, dx, dy, sw*scale, sh*scale);
+    ctx.restore();
+    c.classList.add('piece');
+    return c;
+  }
+
+  function piecePath(w,h,e){
+    const p = new Path2D(), r = knob;
+    p.moveTo(0,0);
+    // top
+    if(e.top===0) p.lineTo(w,0);
+    else {
+      p.lineTo(w/2-r,0);
+      p.arc(w/2,0,r,Math.PI,0,e.top===-1);
+      p.lineTo(w,0);
+    }
+    // right
+    if(e.right===0) p.lineTo(w,h);
+    else {
+      p.lineTo(w,h/2-r);
+      p.arc(w,h/2,r,-Math.PI/2,Math.PI/2,e.right===-1);
+      p.lineTo(w,h);
+    }
+    // bottom
+    if(e.bottom===0) p.lineTo(0,h);
+    else {
+      p.lineTo(w/2+r,h);
+      p.arc(w/2,h,r,0,Math.PI,e.bottom===-1);
+      p.lineTo(0,h);
+    }
+    // left
+    if(e.left===0) p.closePath();
+    else {
+      p.lineTo(0,h/2+r);
+      p.arc(0,h/2,r,Math.PI/2,-Math.PI/2,e.left===-1);
+      p.closePath();
+    }
+    return p;
+  }
+
+  function rotate(piece){
+    if(piece.classList.contains('solved')) return;
+    piece._rotation=(piece._rotation+90)%360;
+    piece.style.transform=`rotate(${piece._rotation}deg)`;
+  }
+
+  function makeDraggable(piece){
+    piece.addEventListener('pointerdown', function down(e){
+      if(piece.classList.contains('solved')) return;
+      e.preventDefault();
+      piece.setPointerCapture(e.pointerId);
+      piece._dx = e.clientX - piece.offsetLeft;
+      piece._dy = e.clientY - piece.offsetTop;
+      piece.style.cursor='grabbing'; piece.style.zIndex=1000;
+      piece.addEventListener('pointermove', move);
+      piece.addEventListener('pointerup',   up);
+      function move(e){
+        e.preventDefault();
+        piece.style.left=(e.clientX-piece._dx)+'px';
+        piece.style.top =(e.clientY-piece._dy)+'px';
+      }
+      function up(e){
+        piece.releasePointerCapture(e.pointerId);
+        piece.removeEventListener('pointermove',move);
+        piece.removeEventListener('pointerup',up);
+        piece.style.cursor='grab'; piece.style.zIndex='';
+        trySnap(piece);
+      }
+    });
+  }
+
+  function trySnap(piece){
+    if(piece.classList.contains('solved')) return;
+    const x = parseFloat(piece.style.left),
+          y = parseFloat(piece.style.top),
+          cw= pieceW+2*knob, ch=pieceH+2*knob,
+          tx= piece._targetX, ty=piece._targetY,
+          ox = Math.max(0, Math.min(x+cw,tx+cw) - Math.max(x,tx)),
+          oy = Math.max(0, Math.min(y+ch,ty+ch) - Math.max(y,ty));
+    if(piece._rotation===0 && ox*oy >= .9*(cw*ch)){
+      piece.style.left      = tx+'px';
+      piece.style.top       = ty+'px';
+      piece.style.transform = '';
+      piece.classList.add('solved');
+      piece.style.boxShadow = 'none';
+      piece.style.border = 'none';
+      piece.style.outline = 'none';
+
+    
+      BOARD.appendChild(piece);
+      if(++solvedCount === rows*cols) launchConfetti();
+    }
+  }
+
+  function launchConfetti(){
+    const colors=['#e21414','#fcee21','#14e295','#1461e2','#d214e2'],
+          num=Math.min(200,rows*cols*4);
+    for(let i=0;i<num;i++){
+      const c=document.createElement('div');
+      c.className='confetti';
+      const s=6+Math.random()*6;
+      c.style.width=c.style.height=s+'px';
+      c.style.background=colors[(Math.random()*colors.length)|0];
+      c.style.left=(Math.random()*innerWidth)+'px';
+      c.style.setProperty('--dx',((Math.random()-.5)*(innerWidth/2))+'px');
+      c.style.setProperty('--dur',(3+Math.random()*2)+'s');
+      c.style.setProperty('--delay',Math.random()+'s');
+      document.body.appendChild(c);
+      c.addEventListener('animationend',()=>c.remove());
+    }
+  }
+
+})();
+</script>
+
+</body>
+</html>
